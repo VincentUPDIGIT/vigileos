@@ -1,0 +1,129 @@
+{
+  "agent": {
+    "name": "network-monitoring-agent",
+    "client_id": "default-client",
+    "log_level": "INFO",
+    "data_dir": "/var/lib/network-agent",
+    "auto_discovery": true,
+    "discovery_networks": [
+      "192.168.1.0/24",
+      "10.0.0.0/24"
+    ],
+    "discovery_interval": 3600,
+    "max_devices": 1000
+  },
+  "auth": {
+    "method": "jwt",
+    "token_expiry": 3600,
+    "enable_multi_client": true,
+    "secret_key": null,
+    "allowed_clients": []
+  },
+  "collection": {
+    "interval": 60,
+    "timeout": 30,
+    "retry_attempts": 3,
+    "batch_size": 100,
+    "max_concurrent": 50,
+    "enabled_collectors": [
+      "snmp",
+      "ssh",
+      "web",
+      "api",
+      "system"
+    ],
+    "default_snmp_community": "public",
+    "default_ssh_timeout": 30,
+    "web_scraping_timeout": 30,
+    "api_timeout": 30
+  },
+  "backend": {
+    "base_url": "https://api.monitoring.example.com",
+    "auth_token": null,
+    "api_key": null,
+    "client_id": null,
+    "timeout": 30,
+    "verify_ssl": true,
+    "compression": true,
+    "batch_size": 100,
+    "retry_attempts": 3,
+    "retry_delay": 5,
+    "sync_interval": 60,
+    "offline_storage": true,
+    "max_offline_storage_mb": 100
+  },
+  "tunnels": {
+    "enable_wireguard": true,
+    "enable_ssh": true,
+    "enable_openvpn": false,
+    "auto_cleanup": true,
+    "cleanup_interval": 3600,
+    "max_tunnels": 10,
+    "default_wireguard_port": 51820,
+    "tunnel_network": "10.8.0.0/24"
+  },
+  "security": {
+    "encryption_enabled": true,
+    "key_rotation_interval": 86400,
+    "max_failed_auth_attempts": 5,
+    "auth_lockout_duration": 300,
+    "allowed_ips": [],
+    "require_client_certificates": false
+  },
+  "monitoring": {
+    "system_metrics": {
+      "enabled": true,
+      "interval": 60,
+      "include_processes": true,
+      "include_network": true,
+      "include_disk": true,
+      "include_memory": true,
+      "include_cpu": true
+    },
+    "network_metrics": {
+      "enabled": true,
+      "ping_targets": [
+        "8.8.8.8",
+        "1.1.1.1"
+      ],
+      "ping_interval": 300,
+      "traceroute_enabled": false,
+      "bandwidth_monitoring": true
+    },
+    "alerting": {
+      "enabled": true,
+      "cpu_threshold": 80,
+      "memory_threshold": 85,
+      "disk_threshold": 90,
+      "response_time_threshold": 5000,
+      "packet_loss_threshold": 5
+    }
+  },
+  "logging": {
+    "level": "INFO",
+    "file_logging": true,
+    "console_logging": true,
+    "max_file_size_mb": 10,
+    "backup_count": 5,
+    "structured_logging": false,
+    "log_rotation": true
+  },
+  "performance": {
+    "max_memory_usage_mb": 512,
+    "gc_threshold": 1000,
+    "connection_pool_size": 20,
+    "request_timeout": 30,
+    "max_retries": 3,
+    "backoff_factor": 2
+  },
+  "features": {
+    "device_discovery": true,
+    "auto_configuration": true,
+    "metric_aggregation": true,
+    "historical_data": true,
+    "real_time_alerts": true,
+    "web_interface": false,
+    "api_server": false,
+    "prometheus_exporter": false
+  }
+}
