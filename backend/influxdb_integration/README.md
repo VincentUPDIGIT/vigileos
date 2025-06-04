@@ -1,6 +1,8 @@
-# Module InfluxDB Integration
+# InfluxDB Integration pour VIGILEOS
 
-Ce module fournit l'intégration d'InfluxDB pour le suivi temporel des équipements dans VIGILEOSAPP25.
+## Vue d'ensemble
+
+Ce module fournit une intégration complète d'InfluxDB dans l'application VIGILEOS pour la surveillance d'équipements réseau. Il permet de stocker, analyser et visualiser les métriques de performance et de disponibilité des équipements en temps réel.
 
 ## Structure
 

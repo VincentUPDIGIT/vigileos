@@ -2,12 +2,14 @@
 Client InfluxDB pour la gestion de la connexion et des opérations de base.
 """
 import os
-from datetime import datetime
-from typing import Dict, List, Optional, Any
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Any, Union
 from influxdb_client import InfluxDBClient, Point, WritePrecision
 from influxdb_client.client.write_api import SYNCHRONOUS
+from influxdb_client.client.exceptions import InfluxDBError
 from django.conf import settings
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -272,6 +274,267 @@ class InfluxDBManager:
         except Exception as e:
             logger.error(f"Erreur lors de la récupération des statistiques: {e}")
             return stats
+    
+    def test_connection(self) -> bool:
+        """
+        Teste la connexion à InfluxDB.
+        
+        Returns:
+            True si la connexion est OK, False sinon
+        """
+        if not self.client:
+            logger.warning("Client InfluxDB non initialisé")
+            return False
+        
+        try:
+            # Test simple avec une requête de santé
+            health = self.client.health()
+            if health.status == "pass":
+                logger.info("Connexion InfluxDB OK")
+                return True
+            else:
+                logger.warning(f"InfluxDB health check failed: {health.status}")
+                return False
+        except Exception as e:
+            logger.error(f"Erreur de test de connexion InfluxDB: {e}")
+            return False
+    
+    def get_bucket_info(self) -> Optional[Dict]:
+        """
+        Récupère les informations du bucket.
+        
+        Returns:
+            Informations du bucket ou None
+        """
+        if not self.client:
+            return None
+        
+        try:
+            buckets_api = self.client.buckets_api()
+            bucket = buckets_api.find_bucket_by_name(self.bucket)
+            if bucket:
+                return {
+                    'id': bucket.id,
+                    'name': bucket.name,
+                    'org_id': bucket.org_id,
+                    'retention_rules': bucket.retention_rules,
+                    'created_at': bucket.created_at,
+                    'updated_at': bucket.updated_at
+                }
+            return None
+        except Exception as e:
+            logger.error(f"Erreur lors de la récupération des infos bucket: {e}")
+            return None
+    
+    def delete_measurement(self, measurement: str, start: str = "-30d", stop: str = "now") -> bool:
+        """
+        Supprime toutes les données d'une mesure.
+        
+        Args:
+            measurement: Nom de la mesure
+            start: Début de la période à supprimer
+            stop: Fin de la période à supprimer
+        
+        Returns:
+            True si succès, False sinon
+        """
+        if not self.client:
+            return False
+        
+        try:
+            delete_api = self.client.delete_api()
+            delete_api.delete(
+                start=start,
+                stop=stop,
+                predicate=f'_measurement="{measurement}"',
+                bucket=self.bucket,
+                org=self.org
+            )
+            logger.info(f"Données supprimées pour la mesure {measurement}")
+            return True
+        except Exception as e:
+            logger.error(f"Erreur lors de la suppression: {e}")
+            return False
+    
+    def get_measurements(self) -> List[str]:
+        """
+        Récupère la liste des mesures disponibles.
+        
+        Returns:
+            Liste des noms de mesures
+        """
+        if not self.query_api:
+            return []
+        
+        try:
+            query = f'''
+            import "influxdata/influxdb/schema"
+            schema.measurements(bucket: "{self.bucket}")
+            '''
+            
+            result = self.query_api.query(query=query)
+            measurements = []
+            
+            for table in result:
+                for record in table.records:
+                    measurements.append(record.get_value())
+            
+            return measurements
+        except Exception as e:
+            logger.error(f"Erreur lors de la récupération des mesures: {e}")
+            return []
+    
+    def get_field_keys(self, measurement: str) -> List[str]:
+        """
+        Récupère les clés de champs pour une mesure.
+        
+        Args:
+            measurement: Nom de la mesure
+        
+        Returns:
+            Liste des clés de champs
+        """
+        if not self.query_api:
+            return []
+        
+        try:
+            query = f'''
+            import "influxdata/influxdb/schema"
+            schema.fieldKeys(
+                bucket: "{self.bucket}",
+                predicate: (r) => r._measurement == "{measurement}"
+            )
+            '''
+            
+            result = self.query_api.query(query=query)
+            fields = []
+            
+            for table in result:
+                for record in table.records:
+                    fields.append(record.get_value())
+            
+            return fields
+        except Exception as e:
+            logger.error(f"Erreur lors de la récupération des champs: {e}")
+            return []
+    
+    def get_tag_keys(self, measurement: str) -> List[str]:
+        """
+        Récupère les clés de tags pour une mesure.
+        
+        Args:
+            measurement: Nom de la mesure
+        
+        Returns:
+            Liste des clés de tags
+        """
+        if not self.query_api:
+            return []
+        
+        try:
+            query = f'''
+            import "influxdata/influxdb/schema"
+            schema.tagKeys(
+                bucket: "{self.bucket}",
+                predicate: (r) => r._measurement == "{measurement}"
+            )
+            '''
+            
+            result = self.query_api.query(query=query)
+            tags = []
+            
+            for table in result:
+                for record in table.records:
+                    tags.append(record.get_value())
+            
+            return tags
+        except Exception as e:
+            logger.error(f"Erreur lors de la récupération des tags: {e}")
+            return []
+    
+    def write_points_batch(self, points: List[Point]) -> bool:
+        """
+        Écrit plusieurs points en lot.
+        
+        Args:
+            points: Liste des points à écrire
+        
+        Returns:
+            True si succès, False sinon
+        """
+        if not self.write_api or not points:
+            return False
+        
+        try:
+            self.write_api.write(bucket=self.bucket, record=points)
+            logger.debug(f"Batch de {len(points)} points écrit avec succès")
+            return True
+        except Exception as e:
+            logger.error(f"Erreur lors de l'écriture en lot: {e}")
+            return False
+    
+    def query_raw(self, query: str) -> List[Dict]:
+        """
+        Exécute une requête Flux brute.
+        
+        Args:
+            query: Requête Flux
+        
+        Returns:
+            Résultats de la requête
+        """
+        if not self.query_api:
+            return []
+        
+        try:
+            result = self.query_api.query(query=query)
+            data = []
+            
+            for table in result:
+                for record in table.records:
+                    data.append({
+                        'time': record.get_time(),
+                        'measurement': record.get_measurement(),
+                        'field': record.get_field(),
+                        'value': record.get_value(),
+                        'tags': {k: v for k, v in record.values.items() 
+                                if not k.startswith('_') and k not in ['result', 'table']}
+                    })
+            
+            return data
+        except Exception as e:
+            logger.error(f"Erreur lors de la requête: {e}")
+            return []
+    
+    def get_database_size(self) -> Optional[Dict]:
+        """
+        Récupère la taille de la base de données.
+        
+        Returns:
+            Informations sur la taille ou None
+        """
+        try:
+            query = f'''
+            from(bucket: "{self.bucket}")
+                |> range(start: -30d)
+                |> group()
+                |> count()
+            '''
+            
+            result = self.query_api.query(query=query)
+            
+            if result and result[0].records:
+                total_points = result[0].records[0].get_value()
+                return {
+                    'total_points': total_points,
+                    'bucket': self.bucket,
+                    'period': '30 days'
+                }
+            
+            return None
+        except Exception as e:
+            logger.error(f"Erreur lors du calcul de la taille: {e}")
+            return None
     
     def close(self):
         """Ferme la connexion à InfluxDB."""

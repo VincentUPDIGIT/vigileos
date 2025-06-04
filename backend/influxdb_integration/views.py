@@ -290,3 +290,274 @@ def generate_availability_report(request, equipment_id):
             {'error': f'Erreur lors de la génération du rapport: {str(e)}'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_global_dashboard(request):
+    """
+    Récupère les données du dashboard global InfluxDB.
+    
+    GET /api/influxdb/dashboard/?hours=24
+    """
+    hours = int(request.query_params.get('hours', 24))
+    
+    # Valider la période
+    if hours not in [1, 6, 12, 24, 48, 72, 168]:  # 1h à 1 semaine
+        hours = 24
+    
+    try:
+        dashboard_data = EquipmentAnalyticsService.get_global_dashboard_data(hours=hours)
+        return Response(dashboard_data)
+    
+    except Exception as e:
+        return Response(
+            {'error': f'Erreur lors de la récupération du dashboard: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_influxdb_status(request):
+    """
+    Vérifie le statut de la connexion InfluxDB.
+    
+    GET /api/influxdb/status/
+    """
+    try:
+        is_connected = influxdb_manager.test_connection()
+        bucket_info = influxdb_manager.get_bucket_info()
+        measurements = influxdb_manager.get_measurements()
+        db_size = influxdb_manager.get_database_size()
+        
+        return Response({
+            'status': 'connected' if is_connected else 'disconnected',
+            'connection_ok': is_connected,
+            'bucket_info': bucket_info,
+            'measurements': measurements,
+            'database_size': db_size,
+            'timestamp': datetime.now().isoformat()
+        })
+    
+    except Exception as e:
+        return Response(
+            {'error': f'Erreur lors de la vérification du statut: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def bulk_record_metrics(request):
+    """
+    Enregistre plusieurs métriques en lot.
+    
+    POST /api/influxdb/metrics/bulk/
+    {
+        "metrics": [
+            {
+                "equipment_id": 1,
+                "metric_type": "cpu_usage",
+                "value": 75.5,
+                "tags": {"location": "server_room"},
+                "fields": {"process_count": 125},
+                "timestamp": "2024-01-01T12:00:00Z"
+            }
+        ]
+    }
+    """
+    metrics_data = request.data.get('metrics', [])
+    
+    if not metrics_data:
+        return Response(
+            {'error': 'Liste de métriques requise'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    try:
+        result = EquipmentMetricsService.bulk_record_metrics(metrics_data)
+        
+        return Response({
+            'message': 'Métriques enregistrées en lot',
+            'statistics': result
+        })
+    
+    except Exception as e:
+        return Response(
+            {'error': f'Erreur lors de l\'enregistrement en lot: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_equipment_alerts(request, equipment_id):
+    """
+    Récupère les alertes basées sur les métriques d'un équipement.
+    
+    GET /api/equipment/{equipment_id}/alerts/?hours=24
+    """
+    equipment = get_object_or_404(Equipment, id=equipment_id)
+    hours = int(request.query_params.get('hours', 24))
+    
+    try:
+        alerts = EquipmentAnalyticsService.get_alerts_from_metrics(
+            equipment_id=equipment_id,
+            hours=hours
+        )
+        
+        return Response({
+            'equipment': {
+                'id': equipment.id,
+                'name': equipment.name,
+                'type': equipment.type
+            },
+            'period_hours': hours,
+            'alerts_count': len(alerts),
+            'alerts': alerts
+        })
+    
+    except Exception as e:
+        return Response(
+            {'error': f'Erreur lors de la récupération des alertes: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def record_bulk_availability(request):
+    """
+    Enregistre la disponibilité de plusieurs équipements.
+    
+    POST /api/influxdb/availability/bulk/
+    {
+        "checks": [
+            {
+                "equipment_id": 1,
+                "is_available": true,
+                "response_time": 45.2,
+                "reason": "ping_success"
+            }
+        ]
+    }
+    """
+    checks_data = request.data.get('checks', [])
+    
+    if not checks_data:
+        return Response(
+            {'error': 'Liste de contrôles requise'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    success_count = 0
+    error_count = 0
+    
+    for check in checks_data:
+        try:
+            equipment_id = check.get('equipment_id')
+            is_available = check.get('is_available')
+            response_time = check.get('response_time')
+            reason = check.get('reason')
+            
+            if equipment_id is None or is_available is None:
+                error_count += 1
+                continue
+            
+            EquipmentMetricsService.record_availability(
+                equipment_id=equipment_id,
+                is_available=bool(is_available),
+                reason=reason,
+                response_time=response_time
+            )
+            
+            success_count += 1
+            
+        except Exception as e:
+            logger.error(f"Erreur lors de l'enregistrement de disponibilité: {e}")
+            error_count += 1
+    
+    return Response({
+        'message': 'Contrôles de disponibilité traités',
+        'success': success_count,
+        'errors': error_count,
+        'total': len(checks_data)
+    })
+
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def cleanup_old_data(request):
+    """
+    Nettoie les anciennes données InfluxDB.
+    
+    DELETE /api/influxdb/cleanup/?days=30
+    """
+    days = int(request.query_params.get('days', 30))
+    
+    if days < 7:  # Sécurité: minimum 7 jours
+        return Response(
+            {'error': 'Minimum 7 jours requis pour la suppression'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    try:
+        # Supprimer les données anciennes
+        start_time = f"-{days}d"
+        
+        measurements_deleted = []
+        for measurement in ['equipment_metrics', 'equipment_status_changes']:
+            success = influxdb_manager.delete_measurement(
+                measurement=measurement,
+                start=start_time,
+                stop="-7d"  # Garder les 7 derniers jours
+            )
+            if success:
+                measurements_deleted.append(measurement)
+        
+        return Response({
+            'message': f'Données supprimées pour {days} jours',
+            'measurements_cleaned': measurements_deleted,
+            'timestamp': datetime.now().isoformat()
+        })
+    
+    except Exception as e:
+        return Response(
+            {'error': f'Erreur lors du nettoyage: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_metrics_schema(request):
+    """
+    Récupère le schéma des métriques disponibles.
+    
+    GET /api/influxdb/schema/
+    """
+    try:
+        measurements = influxdb_manager.get_measurements()
+        schema = {}
+        
+        for measurement in measurements:
+            fields = influxdb_manager.get_field_keys(measurement)
+            tags = influxdb_manager.get_tag_keys(measurement)
+            
+            schema[measurement] = {
+                'fields': fields,
+                'tags': tags
+            }
+        
+        return Response({
+            'measurements': measurements,
+            'schema': schema,
+            'timestamp': datetime.now().isoformat()
+        })
+    
+    except Exception as e:
+        return Response(
+            {'error': f'Erreur lors de la récupération du schéma: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )

@@ -36,6 +36,7 @@ LOCAL_APPS = [
     'equipment',
     'alerts',
     'metrics',
+    'influxdb_integration',
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -209,3 +210,9 @@ LOGGING = {
         },
     },
 }
+
+# InfluxDB settings
+INFLUXDB_URL = config('INFLUXDB_URL', default='http://localhost:8086')
+INFLUXDB_TOKEN = config('INFLUXDB_TOKEN', default='')
+INFLUXDB_ORG = config('INFLUXDB_ORG', default='vigileos')
+INFLUXDB_BUCKET = config('INFLUXDB_BUCKET', default='equipment_metrics')
